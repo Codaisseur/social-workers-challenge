@@ -1,0 +1,48 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+# Usage:
+# ./example <username>
+
+require 'bundler'
+Bundler.require
+
+STDOUT.sync = true
+
+@username = ARGV[0]
+
+# See Slack for the RabbitMQ URL
+connection = Bunny.new(ENV["RABBITMQ_URL"])
+connection.start
+
+channel = connection.create_channel
+exchange = channel.topic("messages", auto_delete: true)
+
+channel.queue("all").bind(exchange, routing_key: "all.#").subscribe do |delivery_info, metadata, payload|
+  puts "A message for all of us: #{payload}, routing key is #{delivery_info.routing_key}"
+end
+
+channel.queue("private").bind(exchange, routing_key: "private.#{@username}.#").subscribe do |delivery_info, metadata, payload|
+  puts "A message for me: #{payload}, routing key is #{delivery_info.routing_key}"
+end
+
+channel.queue("eavesdrop").bind(exchange, routing_key: "private.#").subscribe do |delivery_info, metadata, payload|
+  puts "Psssst! #{delivery_info.routing_key.split(".")[1]} received a private message: #{payload}"
+end
+
+
+def broadcast(exchange, message, channel = "general")
+  exchange.publish("#{@username}: #{message}", routing_key: "all.#{channel}")
+end
+
+def direct(exchange, message, to, command = "random")
+  exchange.publish("#{@username}: #{message}", routing_key: "private.#{to}.#{command}")
+end
+
+broadcast(exchange, "Hello, all!")
+direct(exchange, "Hi, Jim", "Jim", "say_hi")
+direct(exchange, "Hi, Laura", "Laura", "say_hi")
+broadcast(exchange, "Bye all!")
+
+sleep 1.0
+connection.close
